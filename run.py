@@ -141,7 +141,19 @@ if __name__ == '__main__':
     parser.add_argument('--patch_len', type=int, default=16, help='patch length')
 
     args = parser.parse_args()
+    # Check if CUDA is really available (not just detected)
+    cuda_actually_available = False
     if torch.cuda.is_available() and args.use_gpu:
+        try:
+            # Try to actually use CUDA
+            torch.zeros(1).cuda()
+            cuda_actually_available = True
+        except:
+            cuda_actually_available = False
+            # Force use_gpu to False if CUDA doesn't actually work
+            args.use_gpu = False
+    
+    if cuda_actually_available:
         args.device = torch.device('cuda:{}'.format(args.gpu))
         print('Using GPU')
     else:
@@ -150,6 +162,9 @@ if __name__ == '__main__':
         else:
             args.device = torch.device("cpu")
         print('Using cpu or mps')
+        # Ensure use_gpu is False when not using CUDA
+        if not cuda_actually_available and args.use_gpu and args.gpu_type == 'cuda':
+            args.use_gpu = False
 
     if args.use_gpu and args.use_multi_gpu:
         args.devices = args.devices.replace(' ', '')
