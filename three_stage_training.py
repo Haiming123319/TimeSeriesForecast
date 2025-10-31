@@ -133,34 +133,46 @@ def run_experiment(data_path, model_name, model_id, seq_len, label_len, pred_len
 
 
 def extract_metrics(model_id):
-    """从结果文件中提取指标（增强版，支持多种路径）"""
+    """从结果文件中提取指标（增强版，支持多种路径和格式）"""
     
-    # 尝试多个可能的结果文件位置
+    # 尝试多个可能的结果文件位置（使用更宽松的匹配）
     search_patterns = [
         f'./results/*{model_id}*/result*.txt',
-        f'./results/{model_id}*/result*.txt',
+        f'./results/*{model_id}*/metrics.txt',
+        f'./results/*/result*.txt',  # 最新的任何结果
         f'./test_results/*{model_id}*/result*.txt',
         f'./checkpoints/*{model_id}*/result*.txt',
     ]
     
     result_files = []
     for pattern in search_patterns:
-        result_files.extend(glob.glob(pattern))
+        files = glob.glob(pattern)
+        result_files.extend(files)
+    
+    # 去重
+    result_files = list(set(result_files))
     
     if not result_files:
         # 调试输出：列出所有results目录下的文件
         if os.path.exists('./results'):
             all_results = glob.glob('./results/**/result*.txt', recursive=True)
-            print(f"      [调试] 找到 {len(all_results)} 个结果文件，但没有匹配 {model_id}")
+            all_results.extend(glob.glob('./results/**/metrics*.txt', recursive=True))
+            print(f"      [调试] 总共找到 {len(all_results)} 个结果文件")
             if all_results:
-                print(f"      [调试] 示例: {all_results[0]}")
+                print(f"      [调试] 最新文件: {all_results[0]}")
+                print(f"      [调试] 搜索的model_id: {model_id}")
+        else:
+            print(f"      [调试] ./results 目录不存在")
         return None
     
     # 按时间排序，取最新的
     result_files.sort(key=os.path.getmtime, reverse=True)
+    target_file = result_files[0]
+    
+    print(f"      [调试] 读取文件: {target_file}")
     
     try:
-        with open(result_files[0], 'r') as f:
+        with open(target_file, 'r') as f:
             content = f.read()
         
         # 尝试多种格式的正则表达式
@@ -169,11 +181,12 @@ def extract_metrics(model_id):
             (r'mse:\s*([\d.]+)', r'mae:\s*([\d.]+)'),  # 带空格
             (r'MSE:\s*([\d.]+)', r'MAE:\s*([\d.]+)'),  # 大写
             (r'mse\s*=\s*([\d.]+)', r'mae\s*=\s*([\d.]+)'),  # mse = 1.234
+            (r'test.*?mse[:\s]+([\d.]+)', r'test.*?mae[:\s]+([\d.]+)'),  # test mse: 1.234
         ]
         
         for mse_pattern, mae_pattern in patterns:
-            mse_match = re.search(mse_pattern, content, re.IGNORECASE)
-            mae_match = re.search(mae_pattern, content, re.IGNORECASE)
+            mse_match = re.search(mse_pattern, content, re.IGNORECASE | re.DOTALL)
+            mae_match = re.search(mae_pattern, content, re.IGNORECASE | re.DOTALL)
             
             if mse_match and mae_match:
                 metrics = {
@@ -183,11 +196,27 @@ def extract_metrics(model_id):
                 print(f"      ✅ 提取到指标: MSE={metrics['mse']:.4f}, MAE={metrics['mae']:.4f}")
                 return metrics
         
-        # 如果都没匹配上，输出调试信息
-        print(f"      [调试] 文件内容预览: {content[:200]}...")
+        # 如果都没匹配上，输出详细调试信息
+        print(f"      ⚠️  无法提取指标")
+        print(f"      [调试] 文件长度: {len(content)} 字符")
+        # 查找是否有mse/mae关键词
+        if 'mse' in content.lower():
+            mse_context = re.findall(r'.{20}mse.{20}', content, re.IGNORECASE)
+            if mse_context:
+                print(f"      [调试] MSE上下文: {mse_context[0]}")
+        if 'mae' in content.lower():
+            mae_context = re.findall(r'.{20}mae.{20}', content, re.IGNORECASE)
+            if mae_context:
+                print(f"      [调试] MAE上下文: {mae_context[0]}")
+        
+        # 显示文件开头和结尾
+        print(f"      [调试] 文件开头: {content[:150]}")
+        print(f"      [调试] 文件结尾: {content[-150:]}")
         
     except Exception as e:
         print(f"      ❌ 提取指标出错: {e}")
+        import traceback
+        traceback.print_exc()
     
     return None
 
