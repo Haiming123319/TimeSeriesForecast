@@ -1,0 +1,281 @@
+# =============================================================================
+# 🚀 Colab快速启动 - 复制粘贴运行
+# =============================================================================
+# 
+# 优化版AEMO时序预测训练
+# 总时间: 约6-8小时
+# 实验数: 43个（原120个，减少64%）
+# 
+# =============================================================================
+
+
+# =============================================================================
+# 代码块 1: 环境设置（5分钟）
+# =============================================================================
+import os
+
+print("🔍 检查GPU...")
+!nvidia-smi
+
+print("\n📥 克隆最新代码...")
+if os.path.exists('/content/TimeSeriesForecast'):
+    !rm -rf /content/TimeSeriesForecast
+
+!git clone https://github.com/yhm-amber/Time-Series-Library.git /content/TimeSeriesForecast
+
+os.chdir('/content/TimeSeriesForecast')
+
+print("\n📦 安装依赖...")
+!pip install -q torch numpy pandas scikit-learn matplotlib einops transformers statsmodels scipy
+
+# 修复代码
+print("\n🔧 修复导入问题...")
+with open('data_provider/data_loader.py', 'r') as f:
+    content = f.read()
+if 'from sktime.datasets import load_from_tsfile_to_dataframe' in content and 'try:' not in content:
+    content = content.replace(
+        'from sktime.datasets import load_from_tsfile_to_dataframe',
+        'try:\n    from sktime.datasets import load_from_tsfile_to_dataframe\nexcept:\n    load_from_tsfile_to_dataframe = None'
+    )
+    with open('data_provider/data_loader.py', 'w') as f:
+        f.write(content)
+
+with open('data_provider/m4.py', 'r') as f:
+    content = f.read()
+if 'import patoolib' in content and 'try:' not in content:
+    content = content.replace(
+        'import patoolib',
+        'try:\n    import patoolib\nexcept:\n    patoolib = None'
+    )
+    with open('data_provider/m4.py', 'w') as f:
+        f.write(content)
+
+print("\n✅ 环境设置完成！")
+
+import torch
+print(f"✅ PyTorch: {torch.__version__}")
+print(f"✅ CUDA: {torch.cuda.is_available()}")
+if torch.cuda.is_available():
+    print(f"✅ GPU: {torch.cuda.get_device_name(0)}")
+
+
+# =============================================================================
+# 代码块 2: 快速验证（可选，5-10分钟）
+# =============================================================================
+# 运行这个可以验证环境是否正确，可选
+!python3 quick_verify_setup.py
+
+
+# =============================================================================
+# 代码块 3: 生成优化数据（2分钟）
+# =============================================================================
+import os
+os.chdir('/content/TimeSeriesForecast')
+
+print("🔧 生成优化的AEMO数据...")
+!python3 generate_optimized_aemo_data.py
+
+# 验证数据
+import pandas as pd
+data_dir = './data/AEMO_optimized'
+files = sorted([f for f in os.listdir(data_dir) if f.endswith('.csv')])
+
+print(f"\n📊 生成了 {len(files)} 个文件:")
+for freq in ['30min', '15min', '5min']:
+    freq_files = [f for f in files if freq in f]
+    if freq_files:
+        print(f"\n{freq} 数据 ({len(freq_files)} 个文件):")
+        for f in freq_files[:2]:
+            df = pd.read_csv(f'{data_dir}/{f}')
+            print(f"  - {f:25s}: {len(df):6d} 行")
+        if len(freq_files) > 2:
+            print(f"  ... 还有 {len(freq_files)-2} 个文件")
+
+
+# =============================================================================
+# 代码块 4: 运行三阶段训练（6-8小时）⭐ 核心步骤
+# =============================================================================
+import os
+os.chdir('/content/TimeSeriesForecast')
+
+print("="*80)
+print("🚀 开始三阶段训练")
+print("="*80)
+print("预计时间分配:")
+print("  - 阶段1 (模型筛选): 1-2小时")
+print("  - 阶段2 (扩展验证): 3-4小时")
+print("  - 阶段3 (步长扩展): 2-3小时")
+print("  - 总计: 6-8小时")
+print("="*80)
+print()
+
+# 运行三阶段训练
+!python3 three_stage_training.py
+
+print("\n✅ 训练完成！")
+
+
+# =============================================================================
+# 代码块 5: 查看结果
+# =============================================================================
+import os
+import pandas as pd
+import json
+
+os.chdir('/content/TimeSeriesForecast')
+
+print("="*80)
+print("📊 三阶段训练结果汇总")
+print("="*80)
+
+# 读取所有结果
+df_all = pd.read_csv('./three_stage_results/all_results.csv')
+
+# 按阶段统计
+print("\n🎯 各阶段统计:")
+for stage in [1, 2, 3]:
+    df_stage = df_all[df_all['stage'] == stage]
+    success_count = len(df_stage[df_stage['success'] == True])
+    total_count = len(df_stage)
+    avg_time = df_stage['time_minutes'].mean()
+    
+    stage_names = {1: "模型筛选", 2: "扩展验证", 3: "步长扩展"}
+    print(f"\n阶段{stage} ({stage_names[stage]}):")
+    print(f"  成功: {success_count}/{total_count}")
+    print(f"  平均用时: {avg_time:.1f}分钟")
+
+# 最佳结果
+df_success = df_all[(df_all['success'] == True) & (df_all['mae'].notna())]
+
+if len(df_success) > 0:
+    df_success = df_success.sort_values('mae')
+    
+    print("\n" + "="*80)
+    print("🏆 Top 10 最佳结果")
+    print("="*80)
+    print(df_success[['stage', 'state', 'freq', 'model', 'pred_len', 'mae', 'mse']].head(10).to_string(index=False))
+    
+    best = df_success.iloc[0]
+    print(f"\n✨ 最佳配置:")
+    print(f"   模型: {best['model']}")
+    print(f"   州: {best['state']}")
+    print(f"   频率: {best['freq']}")
+    print(f"   预测步长: {int(best['pred_len'])}")
+    print(f"   MAE: {best['mae']:.4f}")
+    print(f"   MSE: {best['mse']:.4f}")
+else:
+    print("\n⚠️  没有成功的实验")
+
+
+# =============================================================================
+# 代码块 6: 可视化对比
+# =============================================================================
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+
+os.chdir('/content/TimeSeriesForecast')
+
+df_all = pd.read_csv('./three_stage_results/all_results.csv')
+df_success = df_all[(df_all['success'] == True) & (df_all['mae'].notna())]
+
+if len(df_success) > 0:
+    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+    
+    # 1. 阶段1: 模型对比
+    ax1 = axes[0, 0]
+    df_stage1 = df_success[df_success['stage'] == 1]
+    if len(df_stage1) > 0:
+        df_stage1.groupby('model')['mae'].mean().sort_values().plot(kind='barh', ax=ax1, color='skyblue')
+        ax1.set_title('阶段1: 模型对比 (平均MAE)', fontsize=14, fontweight='bold')
+        ax1.set_xlabel('MAE ($/MWh)')
+        ax1.grid(True, alpha=0.3)
+    
+    # 2. 阶段2: 频率对比
+    ax2 = axes[0, 1]
+    df_stage2 = df_success[df_success['stage'] == 2]
+    if len(df_stage2) > 0:
+        df_stage2.groupby('freq')['mae'].mean().plot(kind='bar', ax=ax2, color='lightcoral')
+        ax2.set_title('阶段2: 频率对比 (平均MAE)', fontsize=14, fontweight='bold')
+        ax2.set_ylabel('MAE ($/MWh)')
+        ax2.set_xlabel('频率')
+        ax2.grid(True, alpha=0.3)
+        ax2.set_xticklabels(ax2.get_xticklabels(), rotation=0)
+    
+    # 3. 阶段3: 预测步长对比
+    ax3 = axes[1, 0]
+    df_stage3 = df_success[df_success['stage'] == 3]
+    if len(df_stage3) > 0:
+        df_stage3.groupby('pred_len')['mae'].mean().plot(kind='bar', ax=ax3, color='lightgreen')
+        ax3.set_title('阶段3: 预测步长对比 (平均MAE)', fontsize=14, fontweight='bold')
+        ax3.set_ylabel('MAE ($/MWh)')
+        ax3.set_xlabel('预测步长')
+        ax3.grid(True, alpha=0.3)
+        ax3.set_xticklabels(ax3.get_xticklabels(), rotation=0)
+    
+    # 4. 各州表现
+    ax4 = axes[1, 1]
+    state_avg = df_success.groupby('state')['mae'].mean().sort_values()
+    state_avg.plot(kind='barh', ax=ax4, color='mediumpurple')
+    ax4.set_title('各州表现对比 (平均MAE)', fontsize=14, fontweight='bold')
+    ax4.set_xlabel('MAE ($/MWh)')
+    ax4.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig('./three_stage_results/results_visualization.png', dpi=300, bbox_inches='tight')
+    print("✅ 图表已保存: ./three_stage_results/results_visualization.png")
+    plt.show()
+else:
+    print("⚠️  没有足够的数据用于可视化")
+
+
+# =============================================================================
+# 代码块 7: 下载所有结果
+# =============================================================================
+import os
+from google.colab import files
+
+os.chdir('/content/TimeSeriesForecast')
+
+print("📦 打包所有结果...")
+
+!zip -r aemo_optimized_results.zip \
+  ./three_stage_results/ \
+  ./results/ \
+  ./checkpoints/ \
+  -x "*.pyc" "**/__pycache__/*" \
+  2>&1 | tail -10
+
+if os.path.exists('aemo_optimized_results.zip'):
+    size_mb = os.path.getsize('aemo_optimized_results.zip') / (1024 * 1024)
+    print(f"\n✅ 打包完成: {size_mb:.1f} MB")
+    
+    print("\n📥 开始下载...")
+    files.download('aemo_optimized_results.zip')
+    
+    print("\n✅ 下载完成！")
+    print("\n📦 压缩包内容:")
+    print("  - three_stage_results/  : 三阶段汇总结果（CSV+JSON）")
+    print("  - results/             : 所有实验的详细结果")
+    print("  - checkpoints/         : 训练好的模型权重文件")
+else:
+    print("❌ 打包失败")
+
+
+# =============================================================================
+# 🎉 完成！
+# =============================================================================
+print("\n" + "="*80)
+print("🎉 恭喜！所有步骤完成")
+print("="*80)
+print("\n📊 您现在拥有:")
+print("  ✅ 43个优化实验的完整结果")
+print("  ✅ 最佳模型和配置的识别")
+print("  ✅ 详细的性能对比图表")
+print("  ✅ 可供进一步分析的CSV数据")
+print("\n💡 下一步:")
+print("  1. 查看 all_results.csv 了解详细指标")
+print("  2. 根据最佳配置进行生产部署")
+print("  3. 使用checkpoint文件进行预测")
+print("="*80)
+
