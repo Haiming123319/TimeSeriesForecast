@@ -26,7 +26,7 @@ if os.path.exists('/content/TimeSeriesForecast'):
 os.chdir('/content/TimeSeriesForecast')
 
 print("\n📦 安装依赖...")
-!pip install -q torch numpy pandas scikit-learn matplotlib einops transformers statsmodels scipy
+!pip install -q torch numpy pandas scikit-learn matplotlib einops transformers reformer_pytorch statsmodels scipy
 
 # 修复代码
 print("\n🔧 修复导入问题...")
