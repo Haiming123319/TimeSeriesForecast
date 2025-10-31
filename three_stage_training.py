@@ -41,6 +41,33 @@ MODELS_CONFIG = {
 }
 
 
+def get_model_specific_params(model_name, device_type, seq_len, label_len, batch_size):
+    """
+    获取模型特定参数，针对不同模型和设备优化
+    特别处理TimesNet的FFT问题（需要2的幂长度）
+    """
+    name = model_name.lower()
+    
+    # 基础参数
+    num_workers = 2 if device_type == 'cuda' else (4 if device_type == 'mps' else 2)
+    
+    params = {
+        'num_workers': num_workers,
+        'seq_len': seq_len,
+        'label_len': label_len,
+        'batch_size': batch_size,
+    }
+    
+    # TimesNet特殊处理：使用2的幂长度避免cuFFT FP16错误
+    if name == 'timesnet':
+        params['seq_len'] = 256  # 必须是2的幂（128/256/512）
+        params['label_len'] = 128
+        params['batch_size'] = 16  # 轻量配置
+        print(f"  ⚠️  TimesNet使用2的幂长度 seq_len=256 (避免cuFFT FP16错误)")
+    
+    return params
+
+
 def run_experiment(data_path, model_name, model_id, seq_len, label_len, pred_len, 
                    batch_size, epochs=10, patience=2, use_gpu=True):
     """运行单个实验"""
@@ -58,11 +85,8 @@ def run_experiment(data_path, model_name, model_id, seq_len, label_len, pred_len
         else:
             use_gpu = False
     
-    # 根据设备优化 num_workers
-    # Colab/CUDA: 2 workers (免费版只有2 vCPU)
-    # Mac/MPS: 4 workers
-    # CPU: 2 workers
-    num_workers = 2 if device_type == 'cuda' else (4 if device_type == 'mps' else 2)
+    # 获取模型特定参数（特别处理TimesNet）
+    model_params = get_model_specific_params(model_name, device_type, seq_len, label_len, batch_size)
     
     cmd = f"""python3 run.py \
       --task_name long_term_forecast \
@@ -74,17 +98,17 @@ def run_experiment(data_path, model_name, model_id, seq_len, label_len, pred_len
       --data custom \
       --features M \
       --target Price \
-      --seq_len {seq_len} \
-      --label_len {label_len} \
+      --seq_len {model_params['seq_len']} \
+      --label_len {model_params['label_len']} \
       --pred_len {pred_len} \
       --enc_in 5 \
       --dec_in 5 \
       --c_out 5 \
       --train_epochs {epochs} \
-      --batch_size {batch_size} \
+      --batch_size {model_params['batch_size']} \
       --patience {patience} \
       --learning_rate 0.001 \
-      --num_workers {num_workers} \
+      --num_workers {model_params['num_workers']} \
       --use_gpu {1 if use_gpu else 0} \
       --gpu 0 \
       --use_amp \
