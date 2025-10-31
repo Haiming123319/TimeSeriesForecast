@@ -5,10 +5,11 @@
 
 ## 🎯 核心改进
 
-### 🚀 **最新GPU/T4优化 (2025-10-31 晚 - 最终版)**
-- ✅ **自动启用AMP混合精度** (`--use_amp`)
-  - T4 GPU速度提升30-70%
-  - Apple MPS也支持AMP加速
+### 🚀 **最新GPU/T4优化 (2025-10-31 晚 - 方案A最终版)**
+- ✅ **选择性启用AMP混合精度** (方案A)
+  - **TimesNet**: 关闭AMP，使用FP32（避免cuFFT错误）
+  - **其他模型**: 开启AMP，速度提升30-70%
+  - DLinear/PatchTST/iTransformer在T4上使用FP16加速
 - ✅ **智能num_workers配置**
   - Colab T4: 2 workers (适配2 vCPU)
   - Mac MPS: 4 workers
@@ -19,11 +20,15 @@
   - `d_model: 256 → 128`
   - `num_kernels: 6 → 4`
   - `batch_size: 32 → 16`
-  - **预计TimesNet训练速度提升3-5倍**
-- ✅ **修复TimesNet cuFFT FP16错误**
-  - **问题**: AMP开启时，cuFFT要求序列长度是2的幂
-  - **解决**: TimesNet自动使用 `seq_len=256, label_len=128`
-  - **影响**: TimesNet可以正常使用AMP加速，不再报错
+  - **使用FP32避免cuFFT错误**
+- ✅ **修复TimesNet cuFFT FP16错误 (方案A)**
+  - **问题**: TimesNet使用FFT，AMP开启时cuFFT对FP16要求严格
+  - **解决**: TimesNet关闭AMP，使用FP32训练
+  - **权衡**: TimesNet稍慢，但其他模型保持最快速度
+  - **效果**: 所有模型都能稳定运行
+- ✅ **自动检测设备类型**
+  - CUDA: `--gpu 0`
+  - MPS: `--gpu_type mps` (Mac本地)
 - ✅ **详细设备信息输出** (GPU型号、显存、优化状态)
 
 ### 1. 数据优化

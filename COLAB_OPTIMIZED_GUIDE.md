@@ -18,16 +18,16 @@
 - **总计**：43个实验（原120个，减少64%）
 
 ### ✅ 模型配置（轻量级）
-- DLinear: 保持默认
-- PatchTST: d_model=128, n_heads=4
-- TimesNet: d_model=128, **seq_len=256** (2的幂，避免cuFFT FP16错误)
-- iTransformer: d_model=128
+- DLinear: 保持默认，**使用AMP加速**
+- PatchTST: d_model=128, n_heads=4，**使用AMP加速**
+- TimesNet: d_model=128，**关闭AMP** (避免cuFFT FP16错误)
+- iTransformer: d_model=128，**使用AMP加速**
 
-### ✅ GPU优化
-- **自动启用AMP** (FP16混合精度，速度提升30-70%)
-- **智能num_workers**: T4使用2 workers
+### ✅ GPU优化 (方案A)
+- **选择性AMP**: TimesNet用FP32，其他模型用FP16（速度提升30-70%）
+- **智能num_workers**: T4使用2 workers (Colab免费版优化)
 - **cuDNN benchmark**: 自动优化卷积运算
-- **TimesNet特殊处理**: 使用2的幂长度避免cuFFT错误
+- **TimesNet特殊处理**: 关闭AMP避免cuFFT错误，使用轻量配置保证稳定
 
 ---
 

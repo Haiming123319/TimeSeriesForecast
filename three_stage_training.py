@@ -44,7 +44,10 @@ MODELS_CONFIG = {
 def get_model_specific_params(model_name, device_type, seq_len, label_len, batch_size):
     """
     获取模型特定参数，针对不同模型和设备优化
-    特别处理TimesNet的FFT问题（需要2的幂长度）
+    
+    特殊处理：
+    - TimesNet: 关闭AMP（避免cuFFT FP16错误），使用轻量配置
+    - 其他模型: 开启AMP加速
     """
     name = model_name.lower()
     
@@ -56,14 +59,14 @@ def get_model_specific_params(model_name, device_type, seq_len, label_len, batch
         'seq_len': seq_len,
         'label_len': label_len,
         'batch_size': batch_size,
+        'use_amp': True,  # 默认开启AMP
     }
     
-    # TimesNet特殊处理：使用2的幂长度避免cuFFT FP16错误
+    # TimesNet特殊处理：关闭AMP避免cuFFT FP16错误
     if name == 'timesnet':
-        params['seq_len'] = 256  # 必须是2的幂（128/256/512）
-        params['label_len'] = 128
+        params['use_amp'] = False  # 关键：TimesNet不用AMP
         params['batch_size'] = 16  # 轻量配置
-        print(f"  ⚠️  TimesNet使用2的幂长度 seq_len=256 (避免cuFFT FP16错误)")
+        print(f"  ⚠️  TimesNet关闭AMP (避免cuFFT FP16错误)，使用FP32训练")
     
     return params
 
@@ -88,6 +91,15 @@ def run_experiment(data_path, model_name, model_id, seq_len, label_len, pred_len
     # 获取模型特定参数（特别处理TimesNet）
     model_params = get_model_specific_params(model_name, device_type, seq_len, label_len, batch_size)
     
+    # 构建AMP参数（TimesNet不用，其他模型用）
+    amp_flag = '--use_amp' if model_params['use_amp'] else ''
+    
+    # 构建GPU参数
+    if device_type == 'mps':
+        gpu_params = '--use_gpu 1 --gpu_type mps'
+    else:
+        gpu_params = f"--use_gpu {1 if use_gpu else 0} --gpu 0"
+    
     cmd = f"""python3 run.py \
       --task_name long_term_forecast \
       --is_training 1 \
@@ -109,9 +121,8 @@ def run_experiment(data_path, model_name, model_id, seq_len, label_len, pred_len
       --patience {patience} \
       --learning_rate 0.001 \
       --num_workers {model_params['num_workers']} \
-      --use_gpu {1 if use_gpu else 0} \
-      --gpu 0 \
-      --use_amp \
+      {gpu_params} \
+      {amp_flag} \
       {config['params']}"""
     
     start_time = time.time()
