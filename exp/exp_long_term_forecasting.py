@@ -254,12 +254,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         mae, mse, rmse, mape, mspe = metric(preds, trues)
         print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-        f = open("result_long_term_forecast.txt", 'a')
+        # 修复：将结果保存到正确的目录
+        result_file = folder_path + "result_long_term_forecast.txt"
+        f = open(result_file, 'a')
         f.write(setting + "  \n")
         f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
         f.write('\n')
         f.write('\n')
         f.close()
+        print(f'Results saved to: {result_file}')
 
         np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
         np.save(folder_path + 'pred.npy', preds)
