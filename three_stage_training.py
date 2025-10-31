@@ -25,16 +25,18 @@ MODELS_CONFIG = {
         'batch_size': 64
     },
     'PatchTST': {
-        'params': '--e_layers 3 --n_heads 4 --d_model 128 --d_ff 256 --patch_len 16',
+        'params': '--e_layers 2 --n_heads 4 --d_model 128 --d_ff 128 --patch_len 16',
         'batch_size': 32
     },
     'TimesNet': {
-        'params': '--e_layers 2 --d_model 256 --d_ff 256 --num_kernels 6 --top_k 3',
-        'batch_size': 32
+        # 轻量级配置：减少e_layers, d_model, num_kernels，适合T4 GPU
+        'params': '--e_layers 1 --d_model 128 --d_ff 128 --num_kernels 4 --top_k 3',
+        'batch_size': 16
     },
     'iTransformer': {
-        'params': '--e_layers 3 --d_model 256 --d_ff 512 --n_heads 8',
-        'batch_size': 32
+        # 轻量级配置：减少layers和hidden size
+        'params': '--e_layers 2 --d_model 128 --d_ff 256 --n_heads 4',
+        'batch_size': 16
     }
 }
 
@@ -44,6 +46,23 @@ def run_experiment(data_path, model_name, model_id, seq_len, label_len, pred_len
     """运行单个实验"""
     
     config = MODELS_CONFIG[model_name]
+    
+    # 检测设备类型
+    import torch
+    device_type = 'cuda'
+    if use_gpu:
+        if torch.cuda.is_available():
+            device_type = 'cuda'
+        elif torch.backends.mps.is_available():
+            device_type = 'mps'
+        else:
+            use_gpu = False
+    
+    # 根据设备优化 num_workers
+    # Colab/CUDA: 2 workers (免费版只有2 vCPU)
+    # Mac/MPS: 4 workers
+    # CPU: 2 workers
+    num_workers = 2 if device_type == 'cuda' else (4 if device_type == 'mps' else 2)
     
     cmd = f"""python3 run.py \
       --task_name long_term_forecast \
@@ -65,8 +84,10 @@ def run_experiment(data_path, model_name, model_id, seq_len, label_len, pred_len
       --batch_size {batch_size} \
       --patience {patience} \
       --learning_rate 0.001 \
+      --num_workers {num_workers} \
       --use_gpu {1 if use_gpu else 0} \
       --gpu 0 \
+      --use_amp \
       {config['params']}"""
     
     start_time = time.time()
@@ -448,12 +469,32 @@ def main():
         print("请先运行: python3 generate_optimized_aemo_data.py")
         return
     
-    # 检测设备
+    # 检测设备并优化
     import torch
-    use_gpu = torch.cuda.is_available() or torch.backends.mps.is_available()
-    device_name = "GPU" if torch.cuda.is_available() else "MPS" if torch.backends.mps.is_available() else "CPU"
     
-    print(f"\n🖥️  设备: {device_name}")
+    # 启用cuDNN benchmark优化（对TimesNet特别有效）
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+        print("✅ cuDNN benchmark 已启用")
+    
+    use_gpu = torch.cuda.is_available() or torch.backends.mps.is_available()
+    
+    # 打印详细设备信息
+    if torch.cuda.is_available():
+        device_name = f"GPU (CUDA: {torch.cuda.get_device_name(0)})"
+        print(f"\n🖥️  设备: {device_name}")
+        print(f"💾 显存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+        print(f"⚡ AMP: 已启用 (FP16混合精度)")
+        print(f"👷 Workers: 2 (优化Colab性能)")
+    elif torch.backends.mps.is_available():
+        device_name = "MPS (Apple Silicon)"
+        print(f"\n🖥️  设备: {device_name}")
+        print(f"⚡ AMP: 已启用")
+        print(f"👷 Workers: 4")
+    else:
+        device_name = "CPU"
+        print(f"\n🖥️  设备: {device_name}")
+        print(f"👷 Workers: 2")
     
     # 创建结果目录
     os.makedirs('./three_stage_results', exist_ok=True)

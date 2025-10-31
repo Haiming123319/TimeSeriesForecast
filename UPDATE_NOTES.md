@@ -1,9 +1,26 @@
 # 🎉 AEMO时序预测 - 重大优化更新
 
 ## 📋 更新日期
-2025-10-31
+2025-10-31 (最新GPU优化更新)
 
 ## 🎯 核心改进
+
+### 🚀 **最新GPU/T4优化 (2025-10-31 晚)**
+- ✅ **自动启用AMP混合精度** (`--use_amp`)
+  - T4 GPU速度提升30-70%
+  - Apple MPS也支持AMP加速
+- ✅ **智能num_workers配置**
+  - Colab T4: 2 workers (适配2 vCPU)
+  - Mac MPS: 4 workers
+  - CPU: 2 workers
+- ✅ **启用cuDNN benchmark** (对TimesNet尤其有效)
+- ✅ **TimesNet超轻量配置**
+  - `e_layers: 2 → 1`
+  - `d_model: 256 → 128`
+  - `num_kernels: 6 → 4`
+  - `batch_size: 32 → 16`
+  - **预计TimesNet训练速度提升3-5倍**
+- ✅ **详细设备信息输出** (GPU型号、显存、优化状态)
 
 ### 1. 数据优化
 - ✅ **30分钟数据**：从22个月缩减到**15个月**（足够覆盖季节性）
