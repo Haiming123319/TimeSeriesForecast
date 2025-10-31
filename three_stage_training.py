@@ -133,26 +133,61 @@ def run_experiment(data_path, model_name, model_id, seq_len, label_len, pred_len
 
 
 def extract_metrics(model_id):
-    """从结果文件中提取指标"""
-    result_files = glob.glob(f'./results/*{model_id}*/result*.txt')
+    """从结果文件中提取指标（增强版，支持多种路径）"""
+    
+    # 尝试多个可能的结果文件位置
+    search_patterns = [
+        f'./results/*{model_id}*/result*.txt',
+        f'./results/{model_id}*/result*.txt',
+        f'./test_results/*{model_id}*/result*.txt',
+        f'./checkpoints/*{model_id}*/result*.txt',
+    ]
+    
+    result_files = []
+    for pattern in search_patterns:
+        result_files.extend(glob.glob(pattern))
     
     if not result_files:
+        # 调试输出：列出所有results目录下的文件
+        if os.path.exists('./results'):
+            all_results = glob.glob('./results/**/result*.txt', recursive=True)
+            print(f"      [调试] 找到 {len(all_results)} 个结果文件，但没有匹配 {model_id}")
+            if all_results:
+                print(f"      [调试] 示例: {all_results[0]}")
         return None
+    
+    # 按时间排序，取最新的
+    result_files.sort(key=os.path.getmtime, reverse=True)
     
     try:
         with open(result_files[0], 'r') as f:
             content = f.read()
         
-        mse_match = re.search(r'mse:([\d.]+)', content)
-        mae_match = re.search(r'mae:([\d.]+)', content)
+        # 尝试多种格式的正则表达式
+        patterns = [
+            (r'mse:([\d.]+)', r'mae:([\d.]+)'),  # 原格式: mse:1.234
+            (r'mse:\s*([\d.]+)', r'mae:\s*([\d.]+)'),  # 带空格
+            (r'MSE:\s*([\d.]+)', r'MAE:\s*([\d.]+)'),  # 大写
+            (r'mse\s*=\s*([\d.]+)', r'mae\s*=\s*([\d.]+)'),  # mse = 1.234
+        ]
         
-        if mse_match and mae_match:
-            return {
-                'mse': float(mse_match.group(1)),
-                'mae': float(mae_match.group(1))
-            }
-    except:
-        pass
+        for mse_pattern, mae_pattern in patterns:
+            mse_match = re.search(mse_pattern, content, re.IGNORECASE)
+            mae_match = re.search(mae_pattern, content, re.IGNORECASE)
+            
+            if mse_match and mae_match:
+                metrics = {
+                    'mse': float(mse_match.group(1)),
+                    'mae': float(mae_match.group(1))
+                }
+                print(f"      ✅ 提取到指标: MSE={metrics['mse']:.4f}, MAE={metrics['mae']:.4f}")
+                return metrics
+        
+        # 如果都没匹配上，输出调试信息
+        print(f"      [调试] 文件内容预览: {content[:200]}...")
+        
+    except Exception as e:
+        print(f"      ❌ 提取指标出错: {e}")
     
     return None
 
@@ -240,6 +275,26 @@ def stage1_model_selection(use_gpu=True):
     df = pd.DataFrame(results)
     df_success = df[df['success'] == True].copy()
     
+    # 诊断信息
+    print("\n" + "="*80)
+    print("🔍 阶段1诊断信息")
+    print("="*80)
+    print(f"总实验数: {len(df)}")
+    print(f"成功完成: {len(df_success)}")
+    print(f"有指标的: {df['mae'].notna().sum()}")
+    
+    if len(df_success) == 0:
+        print("\n⚠️  所有实验都标记为失败（success=False）")
+        print("可能原因：训练过程返回非0退出码")
+    elif not df_success['mae'].notna().any():
+        print("\n⚠️  实验完成了，但没有提取到任何指标（MAE/MSE）")
+        print("可能原因：结果文件路径不对或格式不匹配")
+        print("\n实验详情:")
+        for idx, row in df.iterrows():
+            status = "✅" if row['success'] else "❌"
+            mae_status = f"MAE={row['mae']:.4f}" if pd.notna(row['mae']) else "无指标"
+            print(f"  {status} {row['state']} | {row['model']:15s} | {mae_status}")
+    
     if len(df_success) > 0 and df_success['mae'].notna().any():
         # 按MAE排序
         df_success = df_success.sort_values('mae')
@@ -260,7 +315,9 @@ def stage1_model_selection(use_gpu=True):
         
         return top2_models, results
     else:
-        print("\n⚠️  阶段1没有成功的实验")
+        print("\n" + "="*80)
+        print("❌ 阶段1失败：无法选出最优模型")
+        print("="*80)
         return [], results
 
 
