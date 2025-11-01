@@ -357,7 +357,7 @@ def stage2_expansion(top2_models, use_gpu=True):
     """
     阶段2: 扩展验证
     - 所有5个州
-    - 30min + 15min 两个频率
+    - 30min + 5min 两个频率（去掉15min）
     - pred_len=24
     - 只用阶段1选出的前2个模型
     """
@@ -372,16 +372,16 @@ def stage2_expansion(top2_models, use_gpu=True):
     print("配置:")
     print(f"  - 模型: {', '.join(top2_models)}")
     print("  - 州: 全部5个 (NSW, QLD, VIC, SA, TAS)")
-    print("  - 频率: 30min, 15min")
-    print("  - 预测步长: 24")
+    print("  - 频率: 30min, 5min（去掉15min）")
+    print("  - 预测步长: 24 (30min=12小时, 5min=2小时)")
     print("  - 训练轮数: 10 epochs, 早停patience=2")
     print("="*80)
     print()
     
     states = ['NSW', 'QLD', 'VIC', 'SA', 'TAS']
     freqs = [
-        ('30min', 192, 96),  # (freq, seq_len, label_len)
-        ('15min', 384, 192)
+        ('30min', 192, 96),   # (freq, seq_len, label_len) - 4天历史预测12小时
+        ('5min', 288, 144)    # 1天历史预测2小时
     ]
     pred_len = 24
     
@@ -445,7 +445,7 @@ def stage2_expansion(top2_models, use_gpu=True):
         print("="*80)
         
         # 按频率分组显示
-        for freq in ['30min', '15min']:
+        for freq in ['30min', '5min']:
             df_freq = df_success[df_success['freq'] == freq]
             if len(df_freq) > 0:
                 print(f"\n{freq} 数据:")
@@ -469,11 +469,11 @@ def stage2_expansion(top2_models, use_gpu=True):
 # ============================================================
 def stage3_pred_len_expansion(best_model, use_gpu=True):
     """
-    阶段3: 步长扩展
+    阶段3: 步长扩展（精简版 + 高频验证）
     - 只用最优模型
-    - 所有州
-    - 30min频率（主要）
-    - pred_len = 24, 48, 96
+    - 精简州: NSW + VIC（代表性）
+    - 30min频率: pred_len = 24, 48（12h, 24h）
+    - 5min频率: pred_len = 12（1h，高频短视距验证）
     """
     
     if not best_model:
@@ -481,70 +481,88 @@ def stage3_pred_len_expansion(best_model, use_gpu=True):
         return []
     
     print("\n" + "="*80)
-    print("🎯 阶段3: 预测步长扩展")
+    print("🎯 阶段3: 预测步长扩展（精简版 + 高频验证）")
     print("="*80)
     print("配置:")
     print(f"  - 模型: {best_model}")
-    print("  - 州: 全部5个")
-    print("  - 频率: 30min")
-    print("  - 预测步长: 24, 48, 96")
+    print("  - 州: NSW + VIC（精简为2个代表性州）")
+    print("  - 30min: pred_len=24,48 (12h,24h)")
+    print("  - 5min: pred_len=12 (1h高频)")
     print("  - 训练轮数: 15 epochs, 早停patience=3")
     print("="*80)
     print()
     
-    states = ['NSW', 'QLD', 'VIC', 'SA', 'TAS']
-    pred_lens = [24, 48, 96]
-    seq_len = 192
-    label_len = 96
+    # 配置实验列表
+    experiments = []
     
-    results = []
-    total = len(states) * len(pred_lens)
-    count = 0
-    
-    for state in states:
-        for pred_len in pred_lens:
-            count += 1
-            
-            data_file = f'{state}_30min.csv'
-            model_id = f'stage3_{state}_{best_model}_pl{pred_len}'
-            
-            print(f"[{count}/{total}] 🚀 {state} | pred_len={pred_len}")
-            print("-"*80)
-            
-            success, elapsed = run_experiment(
-                data_path=data_file,
-                model_name=best_model,
-                model_id=model_id,
-                seq_len=seq_len,
-                label_len=label_len,
-                pred_len=pred_len,
-                batch_size=MODELS_CONFIG[best_model]['batch_size'],
-                epochs=15,
-                patience=3,
-                use_gpu=use_gpu
-            )
-            
-            metrics = extract_metrics(model_id) if success else None
-            
-            result = {
-                'stage': 3,
+    # 30min数据：NSW和VIC，pred_len=24,48
+    for state in ['NSW', 'VIC']:
+        for pred_len in [24, 48]:
+            experiments.append({
                 'state': state,
                 'freq': '30min',
-                'model': best_model,
+                'data_file': f'{state}_30min.csv',
                 'pred_len': pred_len,
-                'success': success,
-                'time_minutes': elapsed / 60,
-                'mse': metrics['mse'] if metrics else None,
-                'mae': metrics['mae'] if metrics else None
-            }
-            
-            results.append(result)
-            
-            status = "✅" if success else "❌"
-            if metrics:
-                print(f"{status} 完成 | MAE: {metrics['mae']:.4f} | 用时: {elapsed/60:.1f}分钟\n")
-            else:
-                print(f"{status} 完成 | 用时: {elapsed/60:.1f}分钟\n")
+                'seq_len': 256,  # 拉长一点，更稳定
+                'label_len': 128,
+                'desc': f'{pred_len*0.5:.0f}小时'
+            })
+    
+    # 5min数据：NSW，pred_len=12（1小时）
+    experiments.append({
+        'state': 'NSW',
+        'freq': '5min',
+        'data_file': 'NSW_5min.csv',
+        'pred_len': 12,
+        'seq_len': 144,  # 12小时历史
+        'label_len': 72,
+        'desc': '1小时'
+    })
+    
+    results = []
+    total = len(experiments)
+    
+    for count, exp in enumerate(experiments, 1):
+        model_id = f"stage3_{exp['state']}_{exp['freq']}_pl{exp['pred_len']}"
+        
+        print(f"[{count}/{total}] 🚀 {exp['state']} | {exp['freq']} | pred_len={exp['pred_len']} ({exp['desc']})")
+        print("-"*80)
+        
+        success, elapsed = run_experiment(
+            data_path=exp['data_file'],
+            model_name=best_model,
+            model_id=model_id,
+            seq_len=exp['seq_len'],
+            label_len=exp['label_len'],
+            pred_len=exp['pred_len'],
+            batch_size=MODELS_CONFIG[best_model]['batch_size'],
+            epochs=15,
+            patience=3,
+            use_gpu=use_gpu
+        )
+        
+        metrics = extract_metrics(model_id) if success else None
+        
+        result = {
+            'stage': 3,
+            'state': exp['state'],
+            'freq': exp['freq'],
+            'model': best_model,
+            'pred_len': exp['pred_len'],
+            'horizon': exp['desc'],
+            'success': success,
+            'time_minutes': elapsed / 60,
+            'mse': metrics['mse'] if metrics else None,
+            'mae': metrics['mae'] if metrics else None
+        }
+        
+        results.append(result)
+        
+        status = "✅" if success else "❌"
+        if metrics:
+            print(f"{status} 完成 | MAE: {metrics['mae']:.4f} | 用时: {elapsed/60:.1f}分钟\n")
+        else:
+            print(f"{status} 完成 | 用时: {elapsed/60:.1f}分钟\n")
     
     # 分析结果
     df = pd.DataFrame(results)
@@ -555,12 +573,16 @@ def stage3_pred_len_expansion(best_model, use_gpu=True):
         print("📊 阶段3结果汇总")
         print("="*80)
         
-        # 按预测步长分组
-        for pred_len in pred_lens:
-            df_pred = df_success[df_success['pred_len'] == pred_len]
-            if len(df_pred) > 0:
-                print(f"\n预测{pred_len}步 ({'12小时' if pred_len==24 else '24小时' if pred_len==48 else '48小时'}):")
-                print(df_pred[['state', 'mae', 'mse']].sort_values('mae').to_string(index=False))
+        # 按频率分组显示
+        print("\n30min数据（不同预测视距）:")
+        df_30min = df_success[df_success['freq'] == '30min']
+        if len(df_30min) > 0:
+            print(df_30min[['state', 'pred_len', 'horizon', 'mae', 'mse']].sort_values(['state', 'pred_len']).to_string(index=False))
+        
+        print("\n5min数据（高频短视距）:")
+        df_5min = df_success[df_success['freq'] == '5min']
+        if len(df_5min) > 0:
+            print(df_5min[['state', 'pred_len', 'horizon', 'mae', 'mse']].to_string(index=False))
         
         return results
     else:
@@ -575,13 +597,13 @@ def main():
     """主流程：执行三阶段训练"""
     
     print("="*80)
-    print("🚀 AEMO时序预测 - 三阶段优化训练")
+    print("🚀 AEMO时序预测 - 三阶段优化训练（精简版）")
     print("="*80)
     print("策略说明:")
-    print("  阶段1: 模型筛选（2州 × 4模型 = 8个实验，约1-2小时）")
-    print("  阶段2: 扩展验证（5州 × 2频率 × 2模型 = 20个实验，约3-4小时）")
-    print("  阶段3: 步长扩展（5州 × 3步长 × 1模型 = 15个实验，约2-3小时）")
-    print("  总计: 约43个实验，相比原方案（120个）减少64%")
+    print("  阶段1: 模型筛选（2州 × 4模型 = 8个实验）")
+    print("  阶段2: 扩展验证（5州 × 2频率(30min+5min) × 2模型 = 20个实验）")
+    print("  阶段3: 步长扩展（精简版：2州30min × 2步长 + 1州5min = 5个实验）")
+    print("  总计: 约33个实验，聚焦核心场景（30min + 5min高频）")
     print("="*80)
     
     # 检查数据目录
